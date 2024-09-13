@@ -849,14 +849,16 @@ bool MatchTemplateApp::DoCalculation( ) {
 #endif
             }
 
+
+
             // trimming setup
-            int init_counter = 2;
+            int init_counter = 10;
 
             for ( current_search_position = first_search_position; current_search_position <= init_counter; current_search_position++ ) {
                 //loop over each rotation angle
 
-                //current_rotation = 0;
-                for ( current_psi = psi_start; current_psi <= psi_max; current_psi += psi_step ) {
+                // //current_rotation = 0;
+                // for ( current_psi = psi_start; current_psi <= psi_max; current_psi += psi_step ) {
 
                     angles.Init(global_euler_search.list_of_search_parameters[current_search_position][0], global_euler_search.list_of_search_parameters[current_search_position][1], global_euler_search.list_of_search_parameters[current_search_position][2], 0.0, 0.0);
                     //                    angles.Init(130.0, 30.0, 199.5, 0.0, 0.0);
@@ -913,7 +915,7 @@ bool MatchTemplateApp::DoCalculation( ) {
 
                             if ( padded_reference.real_values[pixel_counter] > max_intensity_projection.real_values[pixel_counter] ) {
                                 max_intensity_projection.real_values[pixel_counter] = padded_reference.real_values[pixel_counter];
-                                best_psi.real_values[pixel_counter]                 = current_psi;
+                                best_psi.real_values[pixel_counter]                 = global_euler_search.list_of_search_parameters[current_search_position][2];
                                 best_theta.real_values[pixel_counter]               = global_euler_search.list_of_search_parameters[current_search_position][1];
                                 best_phi.real_values[pixel_counter]                 = global_euler_search.list_of_search_parameters[current_search_position][0];
                                 best_defocus.real_values[pixel_counter]             = float(defocus_i) * defocus_step;
@@ -963,7 +965,7 @@ bool MatchTemplateApp::DoCalculation( ) {
                         temp_result->SetResult(1, &temp_float);
                         AddJobToResultQueue(temp_result);
                     }
-                }
+                //}
             }
             // Loop two : Trimming setup
             int new_first_search_position = first_search_position+init_counter;
@@ -1027,7 +1029,7 @@ bool MatchTemplateApp::DoCalculation( ) {
                             // first mip
                             if ( padded_reference.real_values[pixel_counter] > max_intensity_projection.real_values[pixel_counter] ) {
                                 max_intensity_projection.real_values[pixel_counter] = padded_reference.real_values[pixel_counter];
-                                best_psi.real_values[pixel_counter]                 = current_psi;
+                                best_psi.real_values[pixel_counter]                 = global_euler_search.list_of_search_parameters[current_search_position][2];
                                 best_theta.real_values[pixel_counter]               = global_euler_search.list_of_search_parameters[current_search_position][1];
                                 best_phi.real_values[pixel_counter]                 = global_euler_search.list_of_search_parameters[current_search_position][0];
                                 best_defocus.real_values[pixel_counter]             = float(defocus_i) * defocus_step;
