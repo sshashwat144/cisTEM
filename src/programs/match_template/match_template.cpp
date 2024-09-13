@@ -579,14 +579,17 @@ bool MatchTemplateApp::DoCalculation( ) {
     // that has the same number of records per line. These sort of details make or break c++ code.
     std::vector<float> orientations(healpix_binning.records_per_line);
 
-    int number_of_search_positions                     = healpix_binning.number_of_lines;
+    int number_of_search_positions                     = healpix_binning.number_of_lines * 360/in_plane_angular_step;
     global_euler_search.number_of_search_positions = number_of_search_positions;
-    Allocate2DFloatArray(global_euler_search.list_of_search_parameters, number_of_search_positions, 2);
+    Allocate2DFloatArray(global_euler_search.list_of_search_parameters, number_of_search_positions, 3);
 
     for ( int counter = 0; counter < healpix_binning.number_of_lines; counter++ ) {
         healpix_binning.ReadLine(orientations.data( ));
+        for(int i = 0; i<360; i+= in_plane_angular_step){
         global_euler_search.list_of_search_parameters[counter][0] = orientations.at(0);
         global_euler_search.list_of_search_parameters[counter][1] = orientations.at(1);
+        global_euler_search.list_of_search_parameters[counter][2] = i;
+        }
     }
     healpix_binning.Close( );
     #endif
@@ -855,7 +858,7 @@ bool MatchTemplateApp::DoCalculation( ) {
                 //current_rotation = 0;
                 for ( current_psi = psi_start; current_psi <= psi_max; current_psi += psi_step ) {
 
-                    angles.Init(global_euler_search.list_of_search_parameters[current_search_position][0], global_euler_search.list_of_search_parameters[current_search_position][1], current_psi, 0.0, 0.0);
+                    angles.Init(global_euler_search.list_of_search_parameters[current_search_position][0], global_euler_search.list_of_search_parameters[current_search_position][1], global_euler_search.list_of_search_parameters[current_search_position][2], 0.0, 0.0);
                     //                    angles.Init(130.0, 30.0, 199.5, 0.0, 0.0);
 
                     if ( padding != 1.0f ) {
