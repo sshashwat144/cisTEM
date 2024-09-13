@@ -1,5 +1,7 @@
 #include <cistem_config.h>
 
+#define TRIMMING_TEST
+
 #ifdef ENABLEGPU
 #include "../../gpu/gpu_core_headers.h"
 #include "../../gpu/DeviceManager.h"
@@ -80,6 +82,7 @@ void MatchTemplateApp::DoInteractiveUserInput( ) {
     wxString correlation_std_output_file;
     wxString correlation_avg_output_file;
     wxString scaled_mip_output_file;
+    wxString healpix_file = "";
 
     float pixel_size              = 1.0f;
     float voltage_kV              = 300.0f;
@@ -105,6 +108,8 @@ void MatchTemplateApp::DoInteractiveUserInput( ) {
     float    in_plane_angular_step     = 0;
     bool     use_gpu_input             = false;
     int      max_threads               = 1; // Only used for the GPU code
+    bool     do_trimming_input        = false;
+
 
     UserInput* my_input = new UserInput("MatchTemplate", 1.00);
 
@@ -153,6 +158,11 @@ void MatchTemplateApp::DoInteractiveUserInput( ) {
     max_threads   = 1;
 #endif
 
+#ifdef TRIMMING_TEST
+    use_trimming_input = my_input->GetYesNoFromUser("Use Trimming", "Trimming for MIP normalization issues.", "No");
+    healpix_file         = my_input->GetFilenameFromUser("Healpix region segment file", "File containing the Phi and Theta values for search", "orientations.txt", false);
+#endif
+
     int   first_search_position           = -1;
     int   last_search_position            = -1;
     int   image_number_for_gui            = 0;
@@ -164,7 +174,12 @@ void MatchTemplateApp::DoInteractiveUserInput( ) {
 
     delete my_input;
 
-    my_current_job.ManualSetArguments("ttffffffffffifffffbfftttttttttftiiiitttfbi", input_search_images.ToUTF8( ).data( ),
+#ifdef TRIMMING_TEST
+    const char* jop_code_arg_string = "ttffffffffffifffffbfftttttttttftiiiitttfbittt";
+#else
+    const char* jop_code_arg_string = "ttffffffffffifffffbfftttttttttftiiiitttfbib";
+#endif
+    my_current_job.ManualSetArguments(jop_code_arg_string, input_search_images.ToUTF8( ).data( ),
                                       input_reconstruction.ToUTF8( ).data( ),
                                       pixel_size,
                                       voltage_kV,
@@ -205,7 +220,14 @@ void MatchTemplateApp::DoInteractiveUserInput( ) {
                                       result_filename.ToUTF8( ).data( ),
                                       min_peak_radius,
                                       use_gpu_input,
-                                      max_threads);
+                                      max_threads
+#ifdef TRIMMING_TEST
+                                      ,
+                                      do_trimming_input,
+                                      healpix_file.ToUTF8( ).data( ));
+#else
+    );
+#endif
 }
 
 // override the do calculation method which will be what is actually run..
@@ -263,6 +285,12 @@ bool MatchTemplateApp::DoCalculation( ) {
     float    min_peak_radius                 = my_current_job.arguments[39].ReturnFloatArgument( );
     bool     use_gpu                         = my_current_job.arguments[40].ReturnBoolArgument( );
     int      max_threads                     = my_current_job.arguments[41].ReturnIntegerArgument( );
+#ifdef TRIMMING_TEST
+    // The median filter test is only setup to work single threaded.
+    MyAssertFalse(max_threads > 1, "The trimming test is only setup to work single threaded.");
+    bool do_trimming = my_current_job.arguments[42].ReturnBoolArgument( );
+    wxString healpix_file = my_current_job.arguments[43].ReturnStringArgument
+#endif
 
     if ( is_running_locally == false )
         max_threads = number_of_threads_requested_on_command_line; // OVERRIDE FOR THE GUI, AS IT HAS TO BE SET ON THE COMMAND LINE...
@@ -354,6 +382,12 @@ bool MatchTemplateApp::DoCalculation( ) {
     Image projection_filter;
 
     Image max_intensity_projection;
+
+#ifdef TRIMMING_TEST
+    float lower_limit; // mean - 3*stddev
+    float upper_limit; // mean + 3*stddev
+    NumericTextFile healpix_binning(healpix_file, OPEN_TO_READ, 4)
+#endif
 
     Image best_psi;
     Image best_theta;
@@ -533,6 +567,30 @@ bool MatchTemplateApp::DoCalculation( ) {
     // search grid
 
     global_euler_search.InitGrid(my_symmetry, angular_step, 0.0f, 0.0f, psi_max, psi_step, psi_start, pixel_size / high_resolution_limit_search, parameter_map, best_parameters_to_keep);
+   #ifdef TRIMMING_TEST
+
+    // Changing the following 2024-4-5 Bah
+    // float orientations[healpix_binning.number_of_lines];
+
+    // This is no good for two reasons:
+    // 1) you are allocating an array on the stack which does work for some compilers, but not all. It is generally considered that the
+    // size of a stack allocated array should be known at compile time.
+    // 2) even if you knew the size, you are allocating an array that is the size of the file, but what you want is an array
+    // that has the same number of records per line. These sort of details make or break c++ code.
+    std::vector<float> orientations(healpix_binning.records_per_line);
+
+    int number_of_search_positions                     = healpix_binning.number_of_lines;
+    global_euler_search.number_of_search_positions = number_of_search_positions;
+    Allocate2DFloatArray(global_euler_search.list_of_search_parameters, number_of_search_positions, 2);
+
+    for ( int counter = 0; counter < healpix_binning.number_of_lines; counter++ ) {
+        healpix_binning.ReadLine(orientations.data( ));
+        global_euler_search.list_of_search_parameters[counter][0] = orientations.at(0);
+        global_euler_search.list_of_search_parameters[counter][1] = orientations.at(1);
+    }
+    healpix_binning.Close( );
+    #endif
+   
     if ( my_symmetry.StartsWith("C") ) // TODO 2x check me - w/o this O symm at least is broken
     {
         if ( global_euler_search.test_mirror == true ) // otherwise the theta max is set to 90.0 and test_mirror is set to true.  However, I don't want to have to test the mirrors.
@@ -788,7 +846,10 @@ bool MatchTemplateApp::DoCalculation( ) {
 #endif
             }
 
-            for ( current_search_position = first_search_position; current_search_position <= last_search_position; current_search_position++ ) {
+            // trimming setup
+            int init_counter = 2;
+
+            for ( current_search_position = first_search_position; current_search_position <= init_counter; current_search_position++ ) {
                 //loop over each rotation angle
 
                 //current_rotation = 0;
@@ -901,6 +962,136 @@ bool MatchTemplateApp::DoCalculation( ) {
                     }
                 }
             }
+            // Loop two : Trimming setup
+            int new_first_search_position = first_search_position+init_counter;
+            // Setup images for upper_limit and lower_limit
+            
+            for ( current_search_position = new_first_search_position; current_search_position <= last_search_position; current_search_position++) {
+                // loop over each rotation angle
+
+                // current rotation = 0;
+                for ( current_psi = psi_start; current_psi <= psi_max; current_psi += psi_step ) {
+                    
+                    angles.Init(global_euler_search.list_of_search_parameters[current_search_position][0], global_euler_search.list_of_search_parameters[current_search_position][1], current_psi, 0.0, 0.0);
+                    
+                    if ( padding != 1.0f ) {
+                        template_reconstruction.ExtractSlice(padded_projection, angles, 1.0f, false);
+                        padded_projection.SwapRealSpaceQuadrants( );
+                        padded_projection.BackwardFFT( );
+                        padded_projection.ClipInto(&current_projection);
+                        current_projection.ForwardFFT( );
+                    }
+                    else {
+                        template_reconstruction.ExtractSlice(current_projection, angles, 1.0f, false);
+                        current_projection.SwapRealSpaceQuadrants( );
+                    }
+
+                    current_projection.MultiplyPixelWise(projection_filter);
+
+                    current_projection.BackwardFFT( );
+                    //current_projection.ReplaceOutliersWithMean(6.0f);
+
+                    current_projection.AddConstant(-current_projection.ReturnAverageOfRealValuesOnEdges( ));
+
+                    // We want a variance of 1 in the padded FFT. Scale the small SumOfSquares (which is already divided by n) and then re-divide by N.
+                    variance = current_projection.ReturnSumOfSquares( ) * current_projection.number_of_real_space_pixels / padded_reference.number_of_real_space_pixels - powf(current_projection.ReturnAverageOfRealValues( ) * current_projection.number_of_real_space_pixels / padded_reference.number_of_real_space_pixels, 2);
+                    current_projection.DivideByConstant(sqrtf(variance));
+                    current_projection.ClipIntoLargerRealSpace2D(&padded_reference);
+
+                    // Note: The real space variance is set to 1.0 (for the padded size image) and that results in a variance of N in the FFT do to the scaling of the FFT,
+                    // but the FFT values are divided by 1/N so the variance becomes N / (N^2) = is 1/N
+                    padded_reference.ForwardFFT( );
+                    // Zeroing the central pixel is probably not doing anything useful...
+                    padded_reference.ZeroCentralPixel( );
+
+#ifdef MKL
+                    // Use the MKL
+                    vmcMulByConj(padded_reference.real_memory_allocated / 2, reinterpret_cast<MKL_Complex8*>(input_image.complex_values), reinterpret_cast<MKL_Complex8*>(padded_reference.complex_values), reinterpret_cast<MKL_Complex8*>(padded_reference.complex_values), VML_EP | VML_FTZDAZ_ON | VML_ERRMODE_IGNORE);
+#else
+                    for ( pixel_counter = 0; pixel_counter < padded_reference.real_memory_allocated / 2; pixel_counter++ ) {
+                          padded_reference.complex_values[pixel_counter] = conj(padded_reference.complex_values[pixel_counter]) * input_image.complex_values[pixel_counter];
+                    }
+#endif
+                    // Note: the cross correlation will have variance 1/N (the product of variance of the two FFTs assuming the means are both zero and the distributions independent.)
+                    // Taking the inverse FFT scales this variance by N resulting in a MIP with variance 1
+                    padded_reference.BackwardFFT( );
+
+                   // update mip, and histogram..
+                    pixel_counter = 0;
+
+                    for ( current_y = 0; current_y < max_intensity_projection.logical_y_dimension; current_y++ ) {
+                        for ( current_x = 0; current_x < max_intensity_projection.logical_x_dimension; current_x++ ) {
+                            // first mip
+                            if ( padded_reference.real_values[pixel_counter] > max_intensity_projection.real_values[pixel_counter] ) {
+                                max_intensity_projection.real_values[pixel_counter] = padded_reference.real_values[pixel_counter];
+                                best_psi.real_values[pixel_counter]                 = current_psi;
+                                best_theta.real_values[pixel_counter]               = global_euler_search.list_of_search_parameters[current_search_position][1];
+                                best_phi.real_values[pixel_counter]                 = global_euler_search.list_of_search_parameters[current_search_position][0];
+                                best_defocus.real_values[pixel_counter]             = float(defocus_i) * defocus_step;
+                                best_pixel_size.real_values[pixel_counter]          = float(size_i) * pixel_size_step;
+                                //                                if (size_i != 0) wxPrintf("size_i = %i\n", size_i);
+                                //                                correlation_pixel_sum[pixel_counter] = variance;
+                            }
+
+                            // histogram
+
+                            current_bin = int(double((padded_reference.real_values[pixel_counter]) - histogram_min_scaled) / histogram_step_scaled);
+                            //current_bin = int(double((padded_reference.real_values[pixel_counter]) - histogram_min) / histogram_step);
+
+                            if ( current_bin >= 0 && current_bin <= histogram_number_of_points ) {
+                                histogram_data[current_bin] += 1;
+                            }
+
+                            pixel_counter++;
+                        }
+
+                        pixel_counter += padded_reference.padding_jump_value;
+                    }
+
+#ifdef TRIMMING_TEST
+                    // Update limits
+                    for ( pixel_counter = 0; pixel_counter < padded_reference.real_memory_allocated; pixel_counter++ ) {
+                        // update lower and upper limit
+                        lower_limit = (correlation_pixel_sum[pixel_counter] / test_counter[pixel_counter]) - 3 * sqrtf(correlation_pixel_sum_of_squares[pixel_counter] / float(test_counter[pixel_counter]) - powf(correlation_pixel_sum[pixel_counter], 2)); 
+                        upper_limit = (correlation_pixel_sum[pixel_counter] / test_counter[pixel_counter]) + 3 * sqrtf(correlation_pixel_sum_of_squares[pixel_counter] / float(test_counter[pixel_counter]) - powf(correlation_pixel_sum[pixel_counter], 2)); 
+                        
+                        if (padded_reference.real_values[pixel_counter] > lower_limit && padded_reference.real_values < upper_limit){
+                            test_counter_image[pixel_counter] += 1;
+                            // Update
+                            correlation_pixel_sum[pixel_counter] += padded_reference.real_values[pixel_counter];
+                            correlation_pixel_sum_of_squares[pixel_counter] += padded_reference.real_values[pixel_counter]*padded_reference.real_values[pixel_counter];
+                        }
+
+                    }
+#else
+                    //                    correlation_pixel_sum.AddImage(&padded_reference);
+                    for ( pixel_counter = 0; pixel_counter < padded_reference.real_memory_allocated; pixel_counter++ ) {
+                        correlation_pixel_sum[pixel_counter] += padded_reference.real_values[pixel_counter];
+                    }
+                    padded_reference.SquareRealValues( );
+                    //                    correlation_pixel_sum_of_squares.AddImage(&padded_reference);
+                    for ( pixel_counter = 0; pixel_counter < padded_reference.real_memory_allocated; pixel_counter++ ) {
+                        correlation_pixel_sum_of_squares[pixel_counter] += padded_reference.real_values[pixel_counter];
+                    }
+#endif
+                    //max_intensity_projection.QuickAndDirtyWriteSlice("/tmp/mip.mrc", 1);
+
+                    current_projection.is_in_real_space = false;
+                    padded_reference.is_in_real_space   = true;
+
+                    current_correlation_position++;
+                    if ( is_running_locally == true )
+                        my_progress->Update(current_correlation_position);
+
+                    if ( is_running_locally == false ) {
+                        actual_number_of_ccs_calculated++;
+                        temp_float             = current_correlation_position;
+                        JobResult* temp_result = new JobResult;
+                        temp_result->SetResult(1, &temp_float);
+                        AddJobToResultQueue(temp_result);
+                    }
+                } 
+            }
         }
     }
 
@@ -961,8 +1152,8 @@ bool MatchTemplateApp::DoCalculation( ) {
             //                correlation_pixel_sum_of_squares.real_values[pixel_counter] = sqrtf(correlation_pixel_sum_of_squares.real_values[pixel_counter]) * sqrtf(correlation_pixel_sum.logical_x_dimension * correlation_pixel_sum.logical_y_dimension);
             //            }
             //            else correlation_pixel_sum_of_squares.real_values[pixel_counter] = 0.0f;
-            correlation_pixel_sum[pixel_counter] /= float(total_correlation_positions);
-            correlation_pixel_sum_of_squares[pixel_counter] = correlation_pixel_sum_of_squares[pixel_counter] / float(total_correlation_positions) - powf(correlation_pixel_sum[pixel_counter], 2);
+            correlation_pixel_sum[pixel_counter] /= float(test_counter_image[pixel_counter]);
+            correlation_pixel_sum_of_squares[pixel_counter] = correlation_pixel_sum_of_squares[pixel_counter] / float(test_counter_image[pixel_counter]) - powf(correlation_pixel_sum[pixel_counter], 2);
             if ( correlation_pixel_sum_of_squares[pixel_counter] > 0.0f ) {
                 correlation_pixel_sum_of_squares[pixel_counter] = sqrtf(correlation_pixel_sum_of_squares[pixel_counter]) * (float)sqrt_input_pixels;
             }
