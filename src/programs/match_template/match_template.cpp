@@ -159,7 +159,7 @@ void MatchTemplateApp::DoInteractiveUserInput( ) {
 #endif
 
 #ifdef TRIMMING_TEST
-    use_trimming_input = my_input->GetYesNoFromUser("Use Trimming", "Trimming for MIP normalization issues.", "No");
+    do_trimming_input = my_input->GetYesNoFromUser("Use Trimming", "Trimming for MIP normalization issues.", "No");
     healpix_file         = my_input->GetFilenameFromUser("Healpix region segment file", "File containing the Phi and Theta values for search", "orientations.txt", false);
 #endif
 
@@ -289,7 +289,7 @@ bool MatchTemplateApp::DoCalculation( ) {
     // The median filter test is only setup to work single threaded.
     MyAssertFalse(max_threads > 1, "The trimming test is only setup to work single threaded.");
     bool do_trimming = my_current_job.arguments[42].ReturnBoolArgument( );
-    wxString healpix_file = my_current_job.arguments[43].ReturnStringArgument
+    wxString healpix_file = my_current_job.arguments[43].ReturnStringArgument( );
 #endif
 
     if ( is_running_locally == false )
@@ -386,7 +386,8 @@ bool MatchTemplateApp::DoCalculation( ) {
 #ifdef TRIMMING_TEST
     float lower_limit; // mean - 3*stddev
     float upper_limit; // mean + 3*stddev
-    NumericTextFile healpix_binning(healpix_file, OPEN_TO_READ, 4)
+    NumericTextFile healpix_binning(healpix_file, OPEN_TO_READ, 4);
+    Image test_counter_image;
 #endif
 
     Image best_psi;
@@ -498,8 +499,10 @@ bool MatchTemplateApp::DoCalculation( ) {
     best_pixel_size.Allocate(input_image.logical_x_dimension, input_image.logical_y_dimension, 1);
     correlation_pixel_sum_image.Allocate(input_image.logical_x_dimension, input_image.logical_y_dimension, 1);
     correlation_pixel_sum_of_squares_image.Allocate(input_image.logical_x_dimension, input_image.logical_y_dimension, 1);
+    test_counter_image.Allocate(input_image.logical_x_dimension, input_image.logical_y_dimension, 1);
     double* correlation_pixel_sum            = new double[input_image.real_memory_allocated];
     double* correlation_pixel_sum_of_squares = new double[input_image.real_memory_allocated];
+    double* test_counter = new double[input_image.real_memory_allocated];
 
     padded_reference.SetToConstant(0.0f);
     max_intensity_projection.SetToConstant(-FLT_MAX);
@@ -510,6 +513,7 @@ bool MatchTemplateApp::DoCalculation( ) {
 
     ZeroDoubleArray(correlation_pixel_sum, input_image.real_memory_allocated);
     ZeroDoubleArray(correlation_pixel_sum_of_squares, input_image.real_memory_allocated);
+    ZeroDoubleArray(test_counter, input_image.real_memory_allocated);
 
     sqrt_input_pixels = sqrt((double)(input_image.logical_x_dimension * input_image.logical_y_dimension));
 
@@ -1060,8 +1064,8 @@ bool MatchTemplateApp::DoCalculation( ) {
                         lower_limit = (correlation_pixel_sum[pixel_counter] / test_counter[pixel_counter]) - 3 * sqrtf(correlation_pixel_sum_of_squares[pixel_counter] / float(test_counter[pixel_counter]) - powf(correlation_pixel_sum[pixel_counter], 2)); 
                         upper_limit = (correlation_pixel_sum[pixel_counter] / test_counter[pixel_counter]) + 3 * sqrtf(correlation_pixel_sum_of_squares[pixel_counter] / float(test_counter[pixel_counter]) - powf(correlation_pixel_sum[pixel_counter], 2)); 
                         
-                        if (padded_reference.real_values[pixel_counter] > lower_limit && padded_reference.real_values < upper_limit){
-                            test_counter_image[pixel_counter] += 1;
+                        if (padded_reference.real_values[pixel_counter] > lower_limit && padded_reference.real_values[pixel_counter] < upper_limit){
+                            test_counter[pixel_counter] += 1;
                             // Update
                             correlation_pixel_sum[pixel_counter] += padded_reference.real_values[pixel_counter];
                             correlation_pixel_sum_of_squares[pixel_counter] += padded_reference.real_values[pixel_counter]*padded_reference.real_values[pixel_counter];
@@ -1157,8 +1161,8 @@ bool MatchTemplateApp::DoCalculation( ) {
             //                correlation_pixel_sum_of_squares.real_values[pixel_counter] = sqrtf(correlation_pixel_sum_of_squares.real_values[pixel_counter]) * sqrtf(correlation_pixel_sum.logical_x_dimension * correlation_pixel_sum.logical_y_dimension);
             //            }
             //            else correlation_pixel_sum_of_squares.real_values[pixel_counter] = 0.0f;
-            correlation_pixel_sum[pixel_counter] /= float(test_counter_image[pixel_counter]);
-            correlation_pixel_sum_of_squares[pixel_counter] = correlation_pixel_sum_of_squares[pixel_counter] / float(test_counter_image[pixel_counter]) - powf(correlation_pixel_sum[pixel_counter], 2);
+            correlation_pixel_sum[pixel_counter] /= float(test_counter[pixel_counter]);
+            correlation_pixel_sum_of_squares[pixel_counter] = correlation_pixel_sum_of_squares[pixel_counter] / float(test_counter[pixel_counter]) - powf(correlation_pixel_sum[pixel_counter], 2);
             if ( correlation_pixel_sum_of_squares[pixel_counter] > 0.0f ) {
                 correlation_pixel_sum_of_squares[pixel_counter] = sqrtf(correlation_pixel_sum_of_squares[pixel_counter]) * (float)sqrt_input_pixels;
             }
